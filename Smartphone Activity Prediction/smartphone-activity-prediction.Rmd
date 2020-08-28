@@ -51,7 +51,7 @@ The data set obtained was split into training and test sets with the identifier 
 
 The second section of the project will involve using a statistic modeling technique to classify the movements and identify the important measurements.
 
-## Clearning the data
+## Cleaning the data
 
 The R packages required for this project are *data.table*, *reshape2*, *randomForest* and *caret*.
 
