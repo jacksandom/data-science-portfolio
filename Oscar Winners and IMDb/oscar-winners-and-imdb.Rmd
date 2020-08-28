@@ -1,0 +1,450 @@
+---
+title: "Oscar Winners and IMDb"
+author: "Jack Sandom"
+date: "08 September 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The purpose of this project is to demonstrate how to extract insights from data in order to persuade or inform others. Making heavy use of visualisations, it will attempt to take a set of data and tell a compelling narrative with it. To do this the project will use the following approach:
+
+- Take an interesting and clean data set
+- Explore the data in order to find angles with which to approach analysis
+- Write a narrative picking the most interesting angles from the explorations using charts and extensive explanations
+- Present results
+
+The approach the project will take is a fluid one with a broad opening question. This allows the data exploration itself to identify the most compelling specific questions that can be asked.
+
+### The project
+
+Every year the Academy Awards (known commonly as The Oscars) recognise excellence in cinema as assessed by the Academy's voting membership. It is commonly recognised as the most prestigious of the movie awards and draws a lot of global interest. However this project is interested in how the views of the Academy differ from those of the general film viewing public. In this analysis, the general public will be represented by the Internal Movie Database (IMDb) which is the world's most extensive source of movie information and also the largest source of film ratings from the general public.
+
+### The data
+
+The data used for this project will be taken from three sources.The IMDB 5000 Movie Data set from the Kaggle website. This consists of data scraped from IMDB as of 2016. More information can be found on:
+
+https://www.kaggle.com/carolzhangdc/imdb-5000-movie-dataset
+
+The Oscar data for best picture winning movies is also taken from a Kaggle data set which consists of winners and nominees from all of the Oscar ceremonies up to 2016. The link for this data is found at:
+
+https://www.kaggle.com/theacademy/academy-awards
+
+However another set of data will be parsed from Wikipedia which is a table of all films that have won any Oscar. This is a good example of using multiple sources of data and extracting data from a HTML page which is a useful tool. The Wikipedia table can be found at:
+
+https://en.wikipedia.org/wiki/List_of_Academy_Award-winning_films
+
+
+## Gathering and cleaning the data
+
+The first step of the analysis is to read all of the data sets into R and do some initial exploration.
+
+The R packages required for this project are ggplot2, data.table, rvest, stringr and cowplot.
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(data.table)
+library(rvest)
+library(stringr)
+library(cowplot)
+```
+
+### IMBd data
+
+After downloading the two Kaggle sets of data and unzipping, the IMDb data can be loaded.
+
+```{r}
+IMDb <- read.csv("data/movie_metadata.csv", stringsAsFactors = FALSE, encoding = 'UTF-8')
+colnames(IMDb)
+```
+
+The columns of interest from this data are the title, year and IMDb score so the data can be subset accordingly.
+
+```{r}
+IMDb <- IMDb[,c('movie_title', 'title_year', 'imdb_score')]
+head(IMDb, 5)
+```
+
+There is white space at the end of the movie titles which is removed using the stringr package.
+
+```{r}
+IMDb$movie_title <- str_trim(IMDb$movie_title)
+```
+
+As the Oscar data is up to the 2016 ceremony, only films up to 2015 are included. Therefore any films beyond that can be removed from the data.
+
+```{r}
+IMDb['title_year'] <- lapply(IMDb['title_year'], function(x) as.numeric(x))
+IMDb <- subset(IMDb, title_year < 2016)
+```
+
+
+### Oscar data
+
+Next the Oscars data can be loaded.
+
+```{r}
+oscars <- read.csv("data/database.csv", stringsAsFactors=FALSE)
+oscars$Name <- str_trim(oscars$Name)
+colnames(oscars)
+```
+
+The only column not needed from this data is the ceremony identifier column.
+
+```{r}
+oscars <- oscars[,c('Year', 'Award', 'Winner', 'Name', 'Film')]
+head(oscars, 5)
+```
+
+From this data, the aim is to extract the list of films that won the Best Picture award. The award for best picture has been known under five different names:
+
+- 1927/28-1928/29: Academy Award for Outstanding Picture
+- 1929/30-1940: Academy Award for Outstanding Production
+- 1941-1943: Academy Award for Outstanding Motion Picture
+- 1944-1961: Academy Award for Best Motion Picture
+- 1962-present: Academy Award for Best Picture
+
+The data will be subset to reflect these name changes.
+
+```{r}
+bestPictureNoms <- subset(oscars, Award %in% c('Outstanding Picture', 'Outstanding Production', 
+                                               'Outstanding Motion Picture', 'Best Motion Picture', 'Best Picture'))
+```
+
+One mistake in the data is that the film names and production companies are switched around for the 1928 and 1929 nominees. This is fixed below.
+
+```{r}
+bestPictureNoms[1:8, 4] <- bestPictureNoms[1:8, 5]
+bestPictureNoms <- bestPictureNoms[,1:4]
+
+# remove whitespace
+bestPictureNoms$Name <- str_trim(bestPictureNoms$Name)
+```
+
+Finally the data will be filtered by the 'Winner' column to return the best picture winners.
+
+```{r}
+bestPicture <- subset(bestPictureNoms, Winner == 1)
+head(bestPicture, 5)
+```
+
+The final data source is the table in Wikipedia. This can be scraped using the *rvest* package.
+
+```{r}
+url <- "https://web.archive.org/web/20170705051915/https://en.wikipedia.org/wiki/List_of_Academy_Award-winning_films"
+oscarWinners <- url %>%
+  read_html() %>%
+  html_nodes(xpath='//*[@id="mw-content-text"]/div/table') %>%
+  html_table()
+oscarWinners <- oscarWinners[[1]]
+colnames(oscarWinners) <- tolower(colnames(oscarWinners))
+
+
+
+head(oscarWinners, 5)
+```
+
+Again the 2016 data will be removed. Also there are some values in "()" which indicate honorary awards and in "[]" to indicate citations. Both are removed below and the column types are made numeric.
+
+```{r}
+oscarWinners <- subset(oscarWinners, year < 2016)
+
+oscarWinners$awards <- gsub("\\s*\\([^\\)]+\\)","", as.character(oscarWinners$awards))
+oscarWinners$nominations <- gsub("\\s*\\([^\\)]+\\)","", as.character(oscarWinners$nominations))
+oscarWinners$nominations <- gsub("\\s*\\[[^\\)]+\\]","", as.character(oscarWinners$nominations))
+
+oscarWinners$awards <- as.numeric(oscarWinners$awards)
+oscarWinners$nominations <- as.numeric(oscarWinners$nominations)
+```
+
+Taking out the honorary awards means there are some films left with no awards. These can also be removed.
+
+```{r}
+oscarWinners <- subset(oscarWinners, awards > 0)
+```
+
+Another issue with the Wikipedia data is that films that begin with 'The' are loaded incorrectly due to the difference in the film title format and Wikipedia URL title. This is also rectified below.
+
+```{r}
+oscarWinners$film <- with(oscarWinners,ifelse(grepl('TheThe', film), substr(film,as.numeric(gregexpr(pattern ='TheThe',film)) + 3, nchar(film)), film))
+```
+
+That concludes the data gathering and cleaning section of the project and now exploratory analysis can be started.
+
+## Exploratory analysis
+
+The first step is to look at the top ranking films separately. For the Oscars, this is determined by total number of awards and the top 20 movies are pulled out.
+
+```{r fig.width=12, fig.height=6}
+oscarWinners20 <- oscarWinners[order(-oscarWinners$awards),][1:20,]
+g <- ggplot(oscarWinners20, aes(reorder(film, -awards), awards)) + 
+        geom_bar(stat="identity", fill='#bba267') + 
+        geom_text(aes(label = awards), nudge_y = -1,color = "white", fontface = "bold") +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(axis.text.y=element_blank()) +
+        theme(axis.ticks.y=element_blank()) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + 
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        scale_x_discrete(labels = function(x) str_wrap(x, width = 23)) +
+        ggtitle("Top 20 Oscar Winning Movies")
+g
+```
+
+The top 20 IMDb movies are found by IMDb score.
+
+```{r fig.width=12, fig.height=6}
+IMDb$imdb_score <- as.numeric(IMDb$imdb_score)
+IMDb20 <- IMDb[order(-IMDb$imdb_score),][1:20,]
+g <- ggplot(IMDb20, aes(reorder(movie_title, -imdb_score), imdb_score)) + 
+        geom_bar(stat="identity", fill='#f5de50') + 
+        geom_text(aes(label=imdb_score), nudge_y = -1, color="black", fontface="bold") +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(axis.text.y=element_blank()) +
+        theme(axis.ticks.y=element_blank()) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + 
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        scale_x_discrete(labels = function(x) str_wrap(x, width = 23)) +
+        ggtitle("Top 20 Movies on IMDb")
+g
+```
+
+The code below shows that only The Lord of the Rings: The Return of the King and Schindler's List were in the top 20 films most appreciated by both the Academy and IMDB users. This is an early indication of the contrasting ways in which awards committees and the general public rate movies.
+
+```{r}
+subset(oscarWinners20, film %in% IMDb20$movie_title)
+```
+
+A histogram can be used to help us compare the release years of the top movies.
+
+```{r fig.width=9, fig.height=6, warning=FALSE}
+imdbyears <- as.data.frame(IMDb20$title_year)
+colnames(imdbyears) <- 'year'
+oscarWinners20$year <- as.numeric(oscarWinners20$year)
+
+g <- ggplot(oscarWinners20, aes(year)) +
+        geom_histogram(bins=10, fill = "#bba267", alpha=0.6) +
+        scale_x_continuous(limits = c(1930, 2020), breaks=seq(1935,2015,10)) +
+        geom_histogram(data=imdbyears, bins=10, fill="#f5de50", alpha=0.6) +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        ggtitle("Top Oscar and IMDb Movies Distribution by Year")
+g
+```
+
+This seems to suggest that IMDb users favour more recent movies with 13 of the 20 highest rate movies from 1985 onward. Three movies pre-dating 1955 won eight Oscars each: Gone with the Wind (1939), From Here to Eternity (1953) and On the Waterfront (1954) but none of these feature in the IMDB top 20.
+
+Of course winning Oscars is not the only way to measure Oscar success. Some years may feature greater competition and receiving a nomination itself is a recognition of excellence from the Academy. Therefore the next analysis will take the top 20 Oscar films again but including nominations this time. Then the IMDb scores will be added to see how viewers rated them.
+
+To perform this analysis, it is a good idea to merge the data into one data frame by left joining the IMDb data to the top 20 Oscar movies.
+
+```{r}
+oscarWinners20 <- merge(x = oscarWinners20, y = IMDb, by.x = "film", by.y = "movie_title", all.x = TRUE)
+oscarWinners20 <- oscarWinners20[-9] 
+```
+
+Looking at the data shows that three films were not in the IMDb data (Ben-Hur, Gigi and Cabaret). The easiest way to rectify this is by manually filling in from the IMDB website.
+
+```{r}
+oscarWinners20[2,6] <- 8.1
+oscarWinners20[3,6] <- 7.8
+oscarWinners20[7,6] <- 6.9
+```
+
+Now the plot can be created.
+
+```{r fig.width=12, fig.height=7.5, message=FALSE, warning=FALSE}
+# prepare data for plotting
+oscarWinners20 <- oscarWinners20[order(-oscarWinners20$awards, -oscarWinners20$nominations),]
+awardsCount <- as.data.frame(rep(oscarWinners20$film, oscarWinners20$awards))
+colnames(awardsCount) <- 'count'
+nomsCount <- as.data.frame(rep(oscarWinners20$film, oscarWinners20$nominations))
+colnames(nomsCount) <- 'count'
+
+# create plot
+g <- ggplot(nomsCount, aes(count)) + 
+        geom_dotplot(bins=20) +
+        geom_dotplot(data=awardsCount, bins=20, fill="#bba267") +
+        scale_x_discrete(limits=as.vector(oscarWinners20$film), labels = function(x) str_wrap(x, width = 25)) +
+        scale_y_continuous(expand = c(0, 0), limits = c(0, 15)) +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + 
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        ggtitle("Top 20 Oscar Winning Movies and IMDb")
+
+# add IMDb labels
+g <- g + geom_point(aes(y=14), shape = 23, size = 12, fill = "#f5de50") 
+for(i in 1:length(oscarWinners20$imdb_score)){g <- g + geom_text(x=i, y=14, label=oscarWinners20$imdb_score[i])}
+remove(awardsCount); remove(nomsCount)
+g
+```
+
+```{r}
+mean(oscarWinners20$imdb_score)
+```
+
+The chart shows that the Oscar winning movies are generally rated well with an average score of 7.89 across the 20 movies. The most overrated film according to IMDb users is Gigi with a score of only 6.9. The most highly regarded of the Oscar decorated films are Lord of the Rings: Return of the King and Schindler's List with scores of 8.9 (the only two films to make the IMDb top 20).
+
+Another interesting analysis is to look at how the winners of the Oscar award for best picture performed with IMDb users. Considering this is the top recognition at the awards, these movies in particular would be expected to perform well. To do this, the IMDb database first needs to be merged with the best picture data frame which was created earlier from the Oscars Kaggle data.
+
+```{r}
+colnames(bestPicture) <- tolower(colnames(bestPicture))
+bestPicture <- merge(x = bestPicture, y = IMDb, by.x = "name", by.y = "movie_title", all.x = TRUE)
+bestPicture <- bestPicture[,-9]
+
+# remove any duplicate rows
+bestPicture <- bestPicture[!duplicated(bestPicture), ]
+```
+
+Due to the lack of some data in the IMDb set, not all of the Oscar winning movies have entries in the IMDB data so these scores can be entered manually as the data is small.
+
+```{r}
+bestPicture[which(is.na(bestPicture$imdb_score), arr.ind=TRUE),6] <- c('8.3', '8.1', '7.2', '8.1', '6', '6', '8', '6.9', '7.2', '7.6', '8', '7.8', '7.6', '7.7', '7.6', '7.2', '8.7', '7.4', '9', '6.8', '7.3', '7.8')
+
+# fix join error
+bestPicture[12,6] <- 6.8
+```
+
+To show the most and least appreciated of the best picture winning movies, two graphs will be created of the ten highest and lowest IMDb rated movies.
+
+```{r fig.width=12, fig.height=6}
+worst10 <- bestPicture[order(bestPicture$imdb_score),][1:10,]
+worst10$imdb_score <- as.numeric(worst10$imdb_score)
+
+g <- ggplot(worst10, aes(reorder(name, imdb_score), imdb_score)) + 
+        geom_bar(stat="identity", fill='#f5de50') + 
+        geom_text(aes(label=imdb_score), nudge_y = -1, color="black", fontface="bold") +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(axis.text.y=element_blank()) +
+        theme(axis.ticks.y=element_blank()) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + 
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        scale_x_discrete(labels = function(x) str_wrap(x, width = 23)) +
+        ggtitle("Worst 10 Oscar Winning Movies on IMDb")
+remove(worst10)
+g
+```
+
+```{r fig.width=12, fig.height=6}
+best10 <- bestPicture[order(bestPicture$imdb_score, decreasing = TRUE),][1:10,]
+best10$imdb_score <- as.numeric(best10$imdb_score)
+
+g <- ggplot(best10, aes(reorder(name, -imdb_score), imdb_score)) + 
+        geom_bar(stat="identity", fill='#f5de50') + 
+        geom_text(aes(label=imdb_score), nudge_y = -1, color="black", fontface="bold") +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(axis.text.y=element_blank()) +
+        theme(axis.ticks.y=element_blank()) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + 
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        scale_x_discrete(labels = function(x) str_wrap(x, width = 23)) +
+        ggtitle("Best 10 Oscar Winning Movies on IMDb")
+remove(best10)
+g
+```
+
+The above shows a real range of scores for Best Picture winning movies. The Godfather (Best Picture 1972) sits at the top with a rating of 9.2 while Cimarron and Cavalcade (Outstanding Production 1931 and 1933 respectively) are at the bottom with 6. Again this suggests that IMDb users do not appreciate earlier movies in the same way the Academy does (or that the standard of cinema then was much lower).
+
+The next piece of analysis will be to look again at the top 20 rated movies on IMDb and examine their performance at the Oscars i.e. number of awards and nominations (if any). This will give an indication of which movies were most underrated by the Academy.
+
+First the IMDb top 20 is merged with the Oscar winners data.
+
+```{r}
+IMDb20 <- merge(x = IMDb20, y = oscarWinners, by.x = "movie_title", by.y = "film", all.x = TRUE)
+
+# fix join errors
+IMDb20[7,4:6] <- oscarWinners[581,2:4]
+IMDb20[10,4:6] <- oscarWinners[556,2:4]
+IMDb20[14,4:6] <- oscarWinners[594,2:4]
+
+head(IMDb20, 5)
+```
+
+The output of the merge suggests that 6 of the 20 films in the list did not receive any Oscars. The next step is to find out if any of them were nominated by searching through the original Oscars data.
+
+```{r}
+# Films with no oscars
+IMDb20[which(is.na(IMDb20$awards), arr.ind=TRUE),1]
+```
+
+```{r}
+for (i in which(is.na(IMDb20$awards), arr.ind=TRUE)){
+        IMDb20[i,6] <- sum(oscars$Name == IMDb20[which(is.na(IMDb20$awards), arr.ind=TRUE),1][i]) + sum(oscars$Film == IMDb20[which(is.na(IMDb20$awards), arr.ind=TRUE),1][i])
+}
+IMDb20[20,6] <- 7
+```
+
+The remaining NAs indicate no nominations and can be replaced with 0s.
+
+```{r}
+IMDb20[is.na(IMDb20)] <- 0
+```
+
+The plot below is similar to the one above and shows the movie awards against the IMDb rating.
+
+```{r fig.width=12, fig.height=7.5, message=FALSE, warning=FALSE}
+# prepare data for plotting
+IMDb20 <- IMDb20[order(-IMDb20$imdb_score),]
+awardsCount <- as.data.frame(rep(IMDb20$movie_title, IMDb20$awards))
+colnames(awardsCount) <- 'count'
+nomsCount <- as.data.frame(rep(IMDb20$movie_title, IMDb20$nominations))
+colnames(nomsCount) <- 'count'
+
+# create plot
+g <- ggplot(nomsCount, aes(count)) + 
+        geom_dotplot(bins=20) +
+        geom_dotplot(data=awardsCount, bins=20, fill="#bba267") +
+        scale_x_discrete(limits=as.vector(IMDb20$movie_title), labels = function(x) str_wrap(x, width = 23)) +
+        scale_y_continuous(expand = c(0, 0), limits = c(0, 15)) +
+        theme(axis.title.x=element_blank()) + 
+        theme(axis.title.y=element_blank()) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10)) + 
+        theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+        ggtitle("Top 20 IMDb Movies and Oscar Wins/Nominations")
+
+# add IMDb labels
+for(i in 1:length(IMDb20$imdb_score)){
+        g <- g + geom_point(x=i, y=14, shape = 23, size = 12, fill = "#f5de50") + geom_text(x=i, y=14, label=IMDb20$imdb_score[i])
+}
+remove(awardsCount); remove(nomsCount)
+g
+```
+
+The chart gives some very interesting results. A number of films received no Oscars including the top overall film on IMDb, The Shawshank Redemption. Two of the films also received no nominations (The Good, the Bad and the Ugly, Stars Wars: Episode V).
+
+It is important to understand the limitations of the analysis so far and try to find other ways in which to approach the task. One limitation is that ranking films by number of Oscar awards/nominations is not a real representation of how they are judged by the Academy over time but merely just in that year. The movie is only judges against other movies that came out that year so a bad year for movies can lead to an abundance of awards for the one good release that year. This can also go the other way. For example, The Shawshank Redemption (number 1 on IMDb) came out the same year as Pulp Fiction and Forrest Gump, two other films that have stood the test of time. This could explain the lack of real recognition by the Oscars.
+
+To address this issue, the final piece of exploratory analysis will examine how many of the Best Picture winning movies were the best IMDb rated movies of their respective years. To do this, the IMDb data needs to be grouped by release year by the max IMDb score(s) that year.
+
+```{r}
+IMDbByYear <- as.data.table(IMDb)
+IMDbByYear <- IMDbByYear[ , .SD[which.max(imdb_score)], by = title_year]
+IMDbByYear <- IMDbByYear[order(IMDbByYear$title_year),]
+IMDbByYear <- subset(IMDbByYear, title_year > 1926)
+head(IMDbByYear, 10)
+```
+
+Inner joining the data frames show the films in both lists.
+
+```{r}
+merge(IMDbByYear, bestPicture, by.x = 'movie_title', by.y = 'name')[order(year),c(1,4)]
+```
+
+This analysis shows us that only 17 of the 89 best picture winning movies are the highest rated movie of their year on IMDb. In other words, IMDb only agree with the Oscars 19.1% of the time.
+
+## Conclusion
+
+The data has shown that although there are certainly a number of films seemingly loved by both viewers and the Oscars, there are also many films where IMDb users felt the Academy got it wrong. This is hardly a surprising result but it is still interesting to understand the specific movies which separate opinion.
+
+The final piece of analysis addressed one of the limitations of looking at the Oscars as an indicator of how good a film is. However there are other problems which also make comparison difficult. For example, IMDb was founded in 1990 and so for many films, the ratings are a representation of how they stood the test of time. Whereas the Oscars were based on the views of that time. Another issue is that Oscars are awarded in a number of technical categories such as make-up and sound. Although they are important aspects of films, winning these awards does not necessarily indicate a good film and this makes using total awards/nominations as an indicator of greatness difficult. For example, Lord of the Rings: Return of the King receiving so many awards does not indicate that the Oscars view the movie as the best of all time. Rather they view it as a movie that is technically brilliant in addition to having good plot, acting and directing.
+
+Nonetheless, the data still gives a lot of insight and future avenues to explore. One of the limitations of the IMDb data set is that it does not have accurate acting data (i.e. who the main actors are in each movie). One area of interest would be to look at how the films of individuals actors, actresses and directors rank compared to how many awards those individuals have won. Furthermore, IMDb is not the only source of internet reviews and it could also be interesting to add data from other sites such as Rotten Tomatoes or Metacritic for further insight.
