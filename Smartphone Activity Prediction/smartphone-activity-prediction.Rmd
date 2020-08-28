@@ -1,0 +1,247 @@
+---
+title: "Smartphone Activity Prediction"
+author: "Jack Sandom"
+date: "08 September 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The purpose of this project is to demonstrate collecting, working with and cleaning a data set. The goal is to prepare tidy data that can be used for later analysis. The brief for this project is taken from the Getting and Cleaning Data course project in the Data Science Specialisation from Coursera. They define tidy data as requiring the following criteria:
+
+1. Each variable you measure should be in one column
+2. Each different observation of that variable should be in a different row
+3. There should be one table for each "kind" of variable
+4. For multiple tables, they should include a column in the table that allows them to be linked
+
+### The project
+
+One of the most exciting areas in all of data science right now is wearable computing. Companies like Fitbit, Nike, and Jawbone Up are racing to develop the most advanced algorithms to attract new users. The data for this project is collected from the accelerometers from the Samsung Galaxy S smartphone and the primary aim of the project will be to create a tidy data set from the data provided and to perform an analysis using a machine learning technique to classify the data and determine the most important variables.
+
+### The data
+
+The data used in this project can be found at the following link:
+
+https://d396qusza40orc.cloudfront.net/getdata%2Fprojectfiles%2FUCI%20HAR%20Dataset.zip
+
+The data set consists of recordings from 30 participants over a period of time. Each person performed six activities (walking, walking upstairs, walking downstairs, sitting, standing, laying) wearing a smartphone on their waist. Using the embedded accelerometer and gyroscope, a number of measurements were taken. For each record in the data set, the following information is provided:
+
+- Triaxial acceleration from the accelerometer (total acceleration) and the estimated body acceleration
+- Triaxial Angular velocity from the gyroscope
+- A 561-feature vector with time and frequency domain variables
+- Its activity label
+- An identifier of the subject who carried out the experiment
+
+More information about the data is available from the UCI Machine Learning Repository where the data was obtained:
+
+http://archive.ics.uci.edu/ml/datasets/Human+Activity+Recognition+Using+Smartphones
+
+### Objectives
+
+The data set obtained was split into training and test sets with the identifier data also separated out. The aim of the first section of this analysis is to:
+
+1. Merge the training and the test sets to create one data set
+2. Extract only the measurements on the mean and standard deviation for each measurement.
+3. Use descriptive activity names to name the activities in the data set
+4. Appropriately label the data set with descriptive variable names.
+
+The second section of the project will involve using a statistic modeling technique to classify the movements and identify the important measurements.
+
+## Clearning the data
+
+The R packages required for this project are *data.table*, *reshape2*, *randomForest* and *caret*.
+
+```{r message=FALSE, warning=FALSE}
+library(data.table)
+library(reshape2)
+library(randomForest)
+library(caret)
+```
+
+Firstly we download the UCI HAR data and load into R.
+
+```{r}
+temp <- tempfile()
+download.file("https://archive.ics.uci.edu/ml/machine-learning-databases/00240/UCI%20HAR%20Dataset.zip",temp, mode="wb")
+unzip(temp)
+
+# Load train data
+trainData <- read.table("UCI HAR Dataset/train/X_train.txt")
+trainLabel <- read.table("UCI HAR Dataset/train/y_train.txt")
+trainSubject <- read.table("UCI HAR Dataset/train/subject_train.txt")
+
+# Load test data
+testData <- read.table("UCI HAR Dataset/test/X_test.txt")
+testLabel <- read.table("UCI HAR Dataset/test/y_test.txt") 
+testSubject <- read.table("UCI HAR Dataset/test/subject_test.txt")
+
+unlink(temp)
+```
+
+### Merge the traning and the test sets
+
+```{r}
+joinData <- rbind(trainData, testData)
+
+# Remove no longer required data sets
+remove(trainData); remove(testData)
+
+# Show dimensions of new data table
+dim(joinData)
+```
+
+The train and test labels are also joined and finally the train and test subject identifiers.
+
+```{r}
+joinLabel <- rbind(trainLabel, testLabel)
+joinSubject <- rbind(trainSubject, testSubject)
+remove(trainLabel); remove(testLabel); remove(trainSubject); remove(testSubject)
+```
+
+The *head* function can be used to preview the data. Only the first five columns are previewed to reduce the size of the output. The preview shows that the column headers do not currently describe the data in the table. This will be addressed in the next sections.
+
+```{r}
+head(joinData,5)[,c('V1', 'V2', 'V3', 'V4', 'V5')]
+```
+
+### Extract mean and standard deviation for each measurement
+
+To find the mean and standard deviation measurements, first the features data needs to be loaded into R. This is a list of all features recorded by the accelerometers.
+
+```{r}
+features <- read.table("./UCI HAR Dataset/features.txt")
+```
+
+The list of features loaded contains a set of strings and therefore a regular expression query needs to be used to find the mean and standard deviation features.
+
+```{r}
+meanSD <- grep("mean\\(\\)|std\\(\\)", features[, 2])
+```
+
+The joined data can then be subset using the above.
+
+```{r}
+joinData <- joinData[, meanSD]
+dim(joinData)
+```
+
+This has reduced the number of columns to 66. The columns can also be renamed using the features list with some additional cleaning.
+
+```{r}
+names(joinData) <- gsub("\\(\\)", "", features[meanSD, 2]) # remove "()"
+names(joinData) <- gsub("mean", "Mean", names(joinData))   # capitalise M
+names(joinData) <- gsub("std", "Std", names(joinData))     # change "std" to "SD"
+names(joinData) <- gsub("-", "", names(joinData))          # remove "-"
+remove(features)
+
+# Preview data
+head(joinData,5)[,c('tBodyAccMeanX', 'tBodyAccMeanY', 'tBodyAccMeanZ', 'tBodyAccStdX', 
+                    'tBodyAccStdY')]
+```
+
+The column names are now a lot more descriptive and all of the non-relevant data has been removed.
+
+### Use descriptive activity names to name the activities
+
+The activity labels are also loaded from the original data into R.
+
+```{r}
+activity <- read.table("./UCI HAR Dataset/activity_labels.txt")
+activity
+```
+
+These labels will be cleaned up by changing to lower case and removing the underscore.
+
+```{r}
+activity[, 2] <- tolower(gsub("_", "", activity[, 2]))
+substr(activity[2, 2], 8, 8) <- toupper(substr(activity[2, 2], 8, 8))
+substr(activity[3, 2], 8, 8) <- toupper(substr(activity[3, 2], 8, 8))
+```
+
+These labels can then be joined to the label data that was loaded previously.
+
+```{r}
+activityLabel <- activity[joinLabel[, 1], 2]
+joinLabel[, 1] <- activityLabel
+names(joinLabel) <- "activity"
+head(joinLabel)
+```
+
+### Appropriately label the data set with the activity names
+
+Finally the full data will be binded with the subject and activity labels. The activity labels will become the dependent variable for the statistical modelling task in the next section of the project.
+
+```{r}
+names(joinSubject) <- "subject"
+cleanData <- cbind(joinSubject, joinLabel, joinData)
+remove(joinData); remove(activity)
+remove(joinLabel); remove(joinSubject)
+remove(activityLabel); remove(meanSD)
+head(cleanData,5)[,c('subject', 'activity', 'tBodyAccMeanX', 'tBodyAccMeanY', 
+                     'tBodyAccMeanZ')]
+```
+
+## Statistical modeling
+
+This section will use the clean data set from the previous section and utilise a statistical modeling method to classify the data and determine the most important variables in that classification.
+
+As the primary focus of this project was data cleaning, this section will employ only one model (Random forests) and other models will be utilised later in the portfolio.
+
+A simple explanation of random forests are that they operate by constructing a number of decision trees on a training data set and outputting the class that is the mode of the classes across the decision trees. A more detailed explanation will be provided in the Explanatory Post section of the portfolio.
+
+Random forests were chosen for this problem as some of the variables are hard to distinguish e.g. walking vs walking upstairs. The random forests model is more robust than single decision trees (as they use averages) which suffer from high variance or bias.
+
+### Split data by subject into train and test sets
+
+First the clean data will be re-split into train and test sets using a 70/30 split. The data will be split on subject in order to get an even distribution of activities in each set.
+
+```{r}
+`%!in%` <- Negate(`%in%`)
+
+set.seed(2828)
+train_ind <- sample(unique(cleanData$subject), 21)
+
+cleanData.train <- cleanData[cleanData$subject %in% train_ind,]
+cleanData.test <- cleanData[cleanData$subject %!in% train_ind,]
+```
+
+Next the random forest model can be performed on the training data with activity as outcome.
+
+```{r}
+activity.rf <- randomForest(as.factor(cleanData.train$activity)~., data=cleanData.train)
+```
+
+The confusion matrix for the training set shows a 100% accuracy using the random forest model.
+
+```{r}
+training.cm <- confusionMatrix(as.factor(cleanData.train$activity),
+                               predict(activity.rf, cleanData.train, type="class"))
+training.cm[2]
+```
+
+Using the 'varImpPlot' function, the importance of variables can be ranked.
+
+```{r fig.height=8, fig.width=8}
+par(mfrow=c(1,1))
+varImpPlot(activity.rf, pch=1, main="Random Forest Model Variables Importance")
+```
+
+Finally the model is run on the test set to further determine its accuracy.
+
+```{r}
+test.cm <- confusionMatrix(as.factor(cleanData.test$activity),
+                           predict(activity.rf, cleanData.test,type="class"))
+test.cm[2]
+```
+
+The accuracy of the random forests model on the test set is **94%**. This indicates that it is a good model for predicting activities based on data collected from the smart phones.
+
+## Conclusion
+
+This project aimed to demonstrate the importance of create a clean and structured data set in order to perform meaningful analysis. There are a number of other important cleaning techniques that were not required as part of this project but should be considered in any data cleaning task. This includes filling in missing values, correcting erroneous values and standardising.
+
+The clean data set allowed statistic analysis to be performed in a few simple steps with meaningful results. Further steps in this analysis could be to assess the random forests model against other statistical methods.
